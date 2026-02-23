@@ -52,7 +52,12 @@ runs:
     - name: Download pastewatch-cli
       shell: bash
       run: |
-        curl -fsSL "https://github.com/ppiankov/pastewatch/releases/download/v${{ inputs.version }}/pastewatch-cli" \
+        if [ "${{ runner.os }}" = "Linux" ]; then
+          BINARY="pastewatch-cli-linux-amd64"
+        else
+          BINARY="pastewatch-cli"
+        fi
+        curl -fsSL "https://github.com/ppiankov/pastewatch/releases/download/v${{ inputs.version }}/${BINARY}" \
           -o "${{ runner.temp }}/pastewatch-cli"
         chmod +x "${{ runner.temp }}/pastewatch-cli"
 
