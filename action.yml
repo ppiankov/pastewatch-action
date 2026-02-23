@@ -1,0 +1,130 @@
+name: "Pastewatch Scan"
+description: "Scan files for sensitive data patterns using pastewatch-cli"
+branding:
+  icon: "shield"
+  color: "red"
+
+inputs:
+  path:
+    description: "Directory to scan"
+    required: false
+    default: "."
+  version:
+    description: "pastewatch-cli version to use"
+    required: false
+    default: "0.4.0"
+  format:
+    description: "Output format: text, json, sarif"
+    required: false
+    default: "text"
+  check:
+    description: "Check mode (exit code only)"
+    required: false
+    default: "true"
+  allowlist:
+    description: "Path to allowlist file"
+    required: false
+    default: ""
+  rules:
+    description: "Path to custom rules JSON file"
+    required: false
+    default: ""
+  baseline:
+    description: "Path to baseline file"
+    required: false
+    default: ""
+  upload-sarif:
+    description: "Upload SARIF results to GitHub code scanning"
+    required: false
+    default: "false"
+
+outputs:
+  findings-count:
+    description: "Number of findings detected"
+    value: ${{ steps.scan.outputs.findings-count }}
+  report-file:
+    description: "Path to the report file"
+    value: ${{ steps.scan.outputs.report-file }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Download pastewatch-cli
+      shell: bash
+      run: |
+        curl -fsSL "https://github.com/ppiankov/pastewatch/releases/download/v${{ inputs.version }}/pastewatch-cli" \
+          -o "${{ runner.temp }}/pastewatch-cli"
+        chmod +x "${{ runner.temp }}/pastewatch-cli"
+
+    - name: Run scan
+      id: scan
+      shell: bash
+      run: |
+        CLI="${{ runner.temp }}/pastewatch-cli"
+        ARGS="scan --dir ${{ inputs.path }}"
+
+        if [ "${{ inputs.format }}" = "sarif" ] || [ "${{ inputs.upload-sarif }}" = "true" ]; then
+          ARGS="$ARGS --format sarif"
+        elif [ -n "${{ inputs.format }}" ]; then
+          ARGS="$ARGS --format ${{ inputs.format }}"
+        fi
+
+        if [ "${{ inputs.check }}" = "true" ]; then
+          ARGS="$ARGS --check"
+        fi
+
+        if [ -n "${{ inputs.allowlist }}" ]; then
+          ARGS="$ARGS --allowlist ${{ inputs.allowlist }}"
+        fi
+
+        if [ -n "${{ inputs.rules }}" ]; then
+          ARGS="$ARGS --rules ${{ inputs.rules }}"
+        fi
+
+        if [ -n "${{ inputs.baseline }}" ]; then
+          ARGS="$ARGS --baseline ${{ inputs.baseline }}"
+        fi
+
+        REPORT="${{ runner.temp }}/pastewatch-report"
+        if [ "${{ inputs.format }}" = "sarif" ] || [ "${{ inputs.upload-sarif }}" = "true" ]; then
+          REPORT="${REPORT}.sarif"
+        elif [ "${{ inputs.format }}" = "json" ]; then
+          REPORT="${REPORT}.json"
+        else
+          REPORT="${REPORT}.txt"
+        fi
+
+        set +e
+        $CLI $ARGS > "$REPORT" 2>&1
+        EXIT_CODE=$?
+        set -e
+
+        echo "report-file=$REPORT" >> "$GITHUB_OUTPUT"
+
+        if [ $EXIT_CODE -eq 6 ]; then
+          if [ "${{ inputs.format }}" = "json" ]; then
+            COUNT=$(cat "$REPORT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(sum(f.get('count',0) for f in d) if isinstance(d,list) else d.get('count',0))" 2>/dev/null || echo "1")
+          elif [ "${{ inputs.format }}" = "sarif" ] || [ "${{ inputs.upload-sarif }}" = "true" ]; then
+            COUNT=$(cat "$REPORT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(sum(len(r.get('results',[])) for r in d.get('runs',[])))" 2>/dev/null || echo "1")
+          else
+            COUNT=$(grep -c ":" "$REPORT" 2>/dev/null || echo "1")
+          fi
+          echo "findings-count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "::warning::pastewatch found $COUNT sensitive data finding(s)"
+          exit 1
+        elif [ $EXIT_CODE -ne 0 ]; then
+          echo "findings-count=0" >> "$GITHUB_OUTPUT"
+          echo "::error::pastewatch-cli failed with exit code $EXIT_CODE"
+          cat "$REPORT"
+          exit $EXIT_CODE
+        else
+          echo "findings-count=0" >> "$GITHUB_OUTPUT"
+          echo "No sensitive data found."
+        fi
+
+    - name: Upload SARIF
+      if: inputs.upload-sarif == 'true' && always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ steps.scan.outputs.report-file }}
+        category: pastewatch
