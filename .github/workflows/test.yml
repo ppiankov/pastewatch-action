@@ -1,0 +1,34 @@
+name: Test Action
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-macos:
+    name: Test (macOS)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run pastewatch action
+        id: scan
+        uses: ./
+        with:
+          path: ./test-fixtures
+          format: json
+          check: "true"
+        continue-on-error: true
+
+      - name: Verify findings detected
+        shell: bash
+        run: |
+          echo "Findings count: ${{ steps.scan.outputs.findings-count }}"
+          echo "Report file: ${{ steps.scan.outputs.report-file }}"
+          if [ ! -f "${{ steps.scan.outputs.report-file }}" ]; then
+            echo "ERROR: Report file not found"
+            exit 1
+          fi
+          echo "Test passed: action produced report file"
