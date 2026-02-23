@@ -12,9 +12,9 @@ inputs:
   version:
     description: "pastewatch-cli version to use"
     required: false
-    default: "0.5.0"
+    default: "0.6.0"
   format:
-    description: "Output format: text, json, sarif"
+    description: "Output format: text, json, sarif, markdown"
     required: false
     default: "text"
   check:
